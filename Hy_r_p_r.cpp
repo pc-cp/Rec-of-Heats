@@ -10,7 +10,7 @@
 using namespace std;
 
 //lamda=0时是HeatS算法，lamda=1时是ProbS算法,(0,1)之间是二者混合算法
-double lamda=1;
+double lamda=0;
 //L为推荐列表长度
 const int L = 50;
 //MAXN 标记数组最大容量，根据物品数量决定
@@ -64,6 +64,8 @@ void CalForRanking_Score();
 //计算精确率和召回率
 void CalForPrecisionAndRecall();
 
+//运行入口
+void Run();
 //每个结构体变量中是物品编号和权值
 //recItemList[1]即要推荐的第一个物品
 struct recItem{
@@ -87,7 +89,12 @@ int sum_objhelove[1000+5];
 int cmp(recItem a,recItem b);
 
 int main(){
+        Run();
+    return 0;
+}
 
+void Run()
+{
     //遍历训练集，加载obj_user矩阵
     fileLoadOUmatrix();
     //预加载用户的度 Ku 和物品的度 Ko (算W时要用度)
@@ -103,9 +110,7 @@ int main(){
     //计算精确率和召回率
     CalForPrecisionAndRecall();
     
-    return 0;
 }
-
 void fileLoadOUmatrix(){
     FILE *fp;
     fp=fopen("/Users/pengchen/workspace/Rs/ml-100k/ua.base","r");
@@ -319,3 +324,4 @@ void CalForPrecisionAndRecall()
     cout<<"召回率(Recall) : "<<R_ave<<endl;
     //    cout<<"F_ave : "<<F_ave<<endl;
 }
+
