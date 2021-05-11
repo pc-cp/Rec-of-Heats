@@ -10,7 +10,7 @@
 using namespace std;
 
 //lamda=0时是HeatS算法，lamda=1时是ProbS算法,(0,1)之间是二者混合算法
-double lamda=0;
+double lamda=1;
 //L为推荐列表长度
 const int L = 50;
 //MAXN 标记数组最大容量，根据物品数量决定
@@ -31,8 +31,14 @@ int Ku[MAXN+5];
 //物品的度
 int Ko[MAXN+5];
 
+//整个推荐算法的互多样性:汉明距离的平均值
+double D;
+//Qij:用户i和用户j的推荐列表中相同的个数
+int Q[1000][1000];
+//Hij:用户i和用户j的汉明距离
+double H[1000][1000];
 //当前测试集中共有多少条边(rating >= 3)
-int testCnt;
+//int testCnt;
 
 //遍历训练集文件，建立o-u矩阵,obj_user[i][j]=1表示用户j选择了物品i
 void fileLoadOUmatrix();
@@ -58,12 +64,27 @@ void refreshAllRecList();
 //加载在测试集中所有用户所选择的产品
 void refreshAlluser_Item();
 
+//rij为当前itemId在对应recItemList中的相对位置
+double rij;
+//rij_ave为所有rij的平均值，即ranking-score
+double rij_ave;
 //计算排序准确度
 void CalForRanking_Score();
 
+double P_user;
+double R_user;
+double P_ave;
+double R_ave;
+double F_ave;
+//目标推荐用户
+int desUserId;
+int existinTest = 0;
 //计算精确率和召回率
 void CalForPrecisionAndRecall();
 
+//互多样性：汉明距离
+void CalForHamming_Distance();
+void CalWPow();
 //运行入口
 void Run();
 //每个结构体变量中是物品编号和权值
@@ -79,6 +100,8 @@ struct recItemLast{
     int objId;
 }recItemListLast[1000][L+5];
 
+struct recItemLast recItemListLastForCalHamming[1000][L+5];
+
 //在Test集合中每个用户已经选择的列表
 int userObjList[1000][MAXN+5];
 
@@ -89,16 +112,20 @@ int sum_objhelove[1000+5];
 int cmp(recItem a,recItem b);
 
 int main(){
+    clock_t st=clock();
+    //遍历训练集，加载obj_user矩阵
+    fileLoadOUmatrix();     
+    //预加载用户的度 Ku 和物品的度 Ko (算W时要用度)
+    preloadDegree();
+    printf("  λ        RankingScore        Precision        Recall        Hamming\n");
+    for(lamda = 0; lamda <= 1.05; lamda += 0.05){
         Run();
+    }
     return 0;
 }
 
 void Run()
 {
-    //遍历训练集，加载obj_user矩阵
-    fileLoadOUmatrix();
-    //预加载用户的度 Ku 和物品的度 Ko (算W时要用度)
-    preloadDegree();
     //计算W矩阵
     calForW();
     //加载所有用户的推荐列表
@@ -109,7 +136,8 @@ void Run()
     refreshAlluser_Item();
     //计算精确率和召回率
     CalForPrecisionAndRecall();
-    
+    CalForHamming_Distance();
+    printf("%.4lf        %.4lf            %.4lf          %.4lf        %.4lf\n", lamda, rij_ave, P_ave, R_ave, 2*D/(943*942));
 }
 void fileLoadOUmatrix(){
     FILE *fp;
@@ -120,6 +148,7 @@ void fileLoadOUmatrix(){
         if(rating>=3)
             obj_user[itemId][userId]=1;
     }
+    fclose(fp);
 }
 
 int cmp(recItem a,recItem b){
@@ -159,7 +188,6 @@ void calForW(){
     for (int i = 1; i <= MAXN; i++) {
         for (int j = 1; j <= MAXN; j++) {
             W[i][j]=0.0;
-            //sum
             for (int l = 1; l <= 1000; l++) {
                 if (obj_user[i][l]==1&&obj_user[j][l]==1){
                     W[i][j]+=1.0/Ku[l];
@@ -168,7 +196,8 @@ void calForW(){
             //乘以kj的倒数
             if(W[i][j]){
                 W[i][j]*=pow(1.0/Ko[i],1-lamda);    //i : 热传导
-                W[i][j]*=pow(1.0/Ko[j],lamda);      //j : 物质扩散
+                
+                W[i][j]*=pow(1.0/Ko[j], lamda);      //j : 物质扩散
             }
         }
     }
@@ -221,11 +250,12 @@ void refreshAlluser_Item()
 {
     //定义测试集文件指针
     FILE *fp_test;
+    fp_test=fopen("/Users/pengchen/workspace/Rs/ml-100k/ua.test","r");
     int userId_t,itemId_t,rating_t;
     char timeStamp_t[15];
     int cnt = 0;
     for(int desUserId=1;desUserId<=943;desUserId++) {
-        fp_test=fopen("/Users/pengchen/workspace/Rs/ml-100k/ua.test","r");
+        fseek(fp_test,0L,SEEK_SET);
         cnt = 0;
         //select count(*) from u1test where rating >= 3;
         while(~fscanf(fp_test,"%d	%d	%d	%s",&userId_t,&itemId_t,&rating_t,timeStamp_t)){
@@ -238,21 +268,23 @@ void refreshAlluser_Item()
         }
         sum_objhelove[desUserId] = cnt;  //用户desUserId在Test集里面的度
     }
+    fclose(fp_test);
 }
 
 void CalForRanking_Score()
 {
     //rij为当前itemId在对应recItemList中的相对位置
-    double rij;
+    rij = 0;
     //rij_ave为所有rij的平均值，即ranking-score
-    double rij_ave=0;
+    rij_ave=0;
     //目标推荐用户
     int desUserId;
+    int testCnt = 0;
+    FILE *fp_test;
+    fp_test=fopen("/Users/pengchen/workspace/Rs/ml-100k/ua.test","r");
     for(desUserId=1;desUserId<=943;desUserId++){
         //定义测试集文件指针
-        FILE *fp_test;
-        fp_test=fopen("/Users/pengchen/workspace/Rs/ml-100k/ua.test","r");
-        
+        fseek(fp_test,0L,SEEK_SET);
         int userId_t,itemId_t,rating_t;
         char timeStamp_t[15];
         //用户没有选择的产品数
@@ -275,21 +307,21 @@ void CalForRanking_Score()
             }
         }
     }
+    fclose(fp_test);
     rij_ave/=testCnt;
-    cout<<"排序准确度(Ranking-score) : "<<rij_ave<<endl;
 }
 
 //计算精确率和召回率
 void CalForPrecisionAndRecall()
 {
-    double P_user = 0.0;
-    double R_user = 0.0;
-    double P_ave = 0;
-    double R_ave = 0;
-    double F_ave = 0;
+    P_user = 0.0;
+    R_user = 0.0;
+    P_ave = 0;
+    R_ave = 0;
+//    F_ave = 0;
     //目标推荐用户
     int desUserId;
-    int existinTest = 0;
+    existinTest = 0;
     
     for(int i = 1; i <= 1000; ++i){
         for(int j = 1; j <= L; ++j){
@@ -315,13 +347,29 @@ void CalForPrecisionAndRecall()
     }
     P_ave = P_user/existinTest;
     R_ave = R_user/existinTest;
-    cout<<"每个用户的推荐列表长度为 L = "<<L<<endl;
-    cout<<"lamda = "<<lamda<<" [lamda = 1 :Probs， lamda = 0 : Heats] "<<endl;
-    
-    //    F_ave = 2/(P_ave+R_ave)*P_ave*R_ave;
-    cout<<"在测试集中一共有多少个用户(existinTest) : "<<existinTest<<endl;
-    cout<<"精确率(Precision) : "<<P_ave<<endl;
-    cout<<"召回率(Recall) : "<<R_ave<<endl;
-    //    cout<<"F_ave : "<<F_ave<<endl;
 }
 
+//遍历每个用户的最终推荐列表，统计不同用户推荐列表中相同物品的数量
+void CalForHamming_Distance(){
+    //Qij:用户i和用户j的推荐列表中相同的个数
+    //Hij:用户i和用户j的汉明距离
+    //整个推荐算法的互多样性:汉明距离的平均值
+    D = 0;
+    memset(Q, 0, sizeof(int)*1000*1000);
+    memset(H, 0, sizeof(double)*1000*1000);
+    for(int i = 1; i <= 942; ++i){
+        for(int j = i+1; j <= 943; ++j){
+            for(int k = 1; k <= L; ++k){
+                for(int z = 1; z <= L; ++z){
+                    
+                    if(recItemListLast[i][k].objId == recItemListLast[j][z].objId){
+                        ++Q[i][j];
+                        break;
+                    }
+                }
+            }
+            H[i][j] = 1 - 1.0*Q[i][j]/L;
+            D += H[i][j];
+        }
+    }
+}
