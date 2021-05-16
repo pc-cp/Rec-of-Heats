@@ -32,7 +32,7 @@ int cmp(struct dataset a,struct dataset b);
 //int max_book_id = 0;
 //一共有多少个评分
 int record = 0;
-int main(){
+int split(){
     FILE *fp;
     fp=fopen("/Users/pengchen/workspace/Rs/ml-100k/u.data","r");
 
